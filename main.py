@@ -7,7 +7,7 @@ import cv2
 from capture.screen_capture import ScreenCapture
 from perception.ocr_engine import OCREngine
 from perception.map_engine import MapEngine
-from core.state import GameState, ChampionState
+from core.state import GameState
 from intelligence.tracker import JunglerTracker, JaxStrategy
 from output.voice_output import VoiceCoach
 
@@ -24,9 +24,6 @@ class JaxJungleCoach:
         self.capture = ScreenCapture()
         tess_path = self.config['ocr']['tesseract_path']
         
-        if not os.path.exists(tess_path):
-            print(f"\n[AVISO]: Tesseract não encontrado em: {tess_path}")
-            
         self.ocr = OCREngine(tesseract_cmd=tess_path)
         self.map_engine = MapEngine()
         self.tracker = JunglerTracker()
@@ -37,6 +34,7 @@ class JaxJungleCoach:
         self.running = False
         self.in_game = False
         self.last_map_alert = 0
+        self.last_voice_time = 0
 
     def is_lol_running(self):
         for proc in psutil.process_iter(['name']):
@@ -47,29 +45,30 @@ class JaxJungleCoach:
                 pass
         return False
 
+    def speak_safe(self, text):
+        """Evita sobreposição de falas e garante um intervalo mínimo."""
+        current_time = time.time()
+        if current_time - self.last_voice_time > 3: # 3 segundos entre falas
+            print(f"[COACH] {text}")
+            self.voice.speak(text)
+            self.last_voice_time = current_time
+
     def wait_for_game_start(self):
-        print("\n[STAND-BY] Aguardando League of Legends...")
+        print("\n[STAND-BY] Aguardando partida iniciar...")
         while self.running:
             if not self.is_lol_running():
                 time.sleep(5)
                 continue
             
-            print("[SISTEMA] LoL detectado! Tentando ler o relógio...")
             frame = self.capture.capture_frame()
             current_time = self.ocr.extract_game_time(frame)
             
             if current_time > 0:
-                print(f"[SISTEMA] Partida detectada! Iniciando...")
-                self.voice.speak("Partida iniciada. Boa sorte!")
+                self.speak_safe("Partida detectada. Boa sorte no Rift!")
                 self.in_game = True
                 return True
             
-            # Debug para ajudar o usuário a ver o que o script está vendo
-            debug_roi = self.ocr.preprocess_for_time(frame[int(frame.shape[0]*0.01):int(frame.shape[0]*0.06), int(frame.shape[1]*0.92):int(frame.shape[1]*0.99)])
-            cv2.imwrite("debug_clock_view.png", debug_roi)
-            
-            print("[SISTEMA] Relógio não detectado. Verifique 'debug_clock_view.png'.")
-            time.sleep(5)
+            time.sleep(3)
         return False
 
     def run_session(self):
@@ -93,27 +92,30 @@ class JaxJungleCoach:
                     self.state.update_time(current_time)
                     last_time_processed = current_time
                     
-                    # 1. Analisar Minimapa
+                    # 1. Alertas Baseados em Tempo (Objetivos e Selva)
+                    time_alerts = self.tracker.get_time_alerts(current_time)
+                    for alert in time_alerts:
+                        self.speak_safe(alert)
+
+                    # 2. Análise de Minimapa (Inimigos Reais)
                     minimap_roi = self.ocr.get_minimap_roi(frame)
                     map_state = self.map_engine.analyze_map_state(minimap_roi)
                     
-                    # 2. Lógica de Alertas de Mapa
-                    if time.time() - self.last_map_alert > 15: # Evita spam de voz
-                        if map_state["enemy_count"] > 0:
-                            if any(zone in map_state["hot_zones"] for zone in ["dragon", "baron_nashor"]):
-                                self.voice.speak("Inimigos detectados perto de objetivo importante!")
-                                self.last_map_alert = time.time()
-                            elif map_state["enemy_count"] >= 3:
-                                self.voice.speak(f"Cuidado, {map_state['enemy_count']} inimigos visíveis no mapa.")
-                                self.last_map_alert = time.time()
+                    # 3. Lógica de Alertas de Mapa e Objetivos
+                    enemy_count = map_state["enemy_count"]
+                    
+                    if enemy_count > 0:
+                        # Prioridade: Inimigos perto de objetivos
+                        if any(zone in map_state["hot_zones"] for zone in ["dragon", "baron_nashor"]):
+                            self.speak_safe("Atenção! Inimigo detectado próximo ao objetivo!")
+                        
+                        # Estratégia baseada em posição
+                        advice = JaxStrategy.evaluate_objective_priority(current_time, 0, 0) # Simplificado
+                        if advice:
+                            self.speak_safe(advice)
 
-                    # 3. Gatilhos de Tempo
-                    if 10 <= current_time <= 15:
-                        self.voice.speak("Inicie sua rota de selva.")
-                    elif 185 <= current_time <= 195:
-                        self.voice.speak("Aronguejo disponível.")
-
-                    print(f"[LIVE] Tempo: {int(current_time // 60)}:{int(current_time % 60):02d} | Inimigos: {map_state['enemy_count']}")
+                    # Log de status no console
+                    print(f"[LIVE] Tempo: {int(current_time // 60)}:{int(current_time % 60):02d} | Inimigos Reais: {enemy_count}")
 
                 time.sleep(self.config['app']['capture_interval'])
                 
@@ -123,12 +125,12 @@ class JaxJungleCoach:
 
     def start(self):
         self.running = True
-        print("--- Jax Jungle Coach v5 (Map Aware) ---")
+        print("--- Jax Jungle Coach v6 (Final Polish) ---")
         try:
             while self.running:
                 if self.wait_for_game_start():
                     self.run_session()
-                    print("[SISTEMA] Partida finalizada.")
+                    print("[SISTEMA] Partida finalizada. Voltando para espera...")
                     time.sleep(10)
         except KeyboardInterrupt:
             self.stop()
