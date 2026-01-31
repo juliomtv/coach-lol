@@ -20,3 +20,16 @@ para o caminho onde você instalou, lembrando de usar duas barras `\\`.
 
 ### 4. Reiniciar o Coach
 Após instalar, basta rodar o `python main.py` novamente.
+
+### 5. Instalar Dependências do Python
+Certifique-se de ter todas as bibliotecas necessárias instaladas:
+```bash
+pip install mss numpy opencv-python pytesseract pillow psutil
+```
+
+### 6. Diagnóstico de Detecção
+Se o coach continuar em "Stand-by" mesmo com o jogo aberto:
+1. Execute o script de teste: `python test_ocr.py`.
+2. Mude rapidamente para a janela do League of Legends.
+3. O script salvará um arquivo chamado `debug_ocr_roi.png`. Abra este arquivo e veja se ele mostra o relógio do jogo.
+4. Se o relógio não aparecer ou estiver cortado, sua resolução pode ser diferente da padrão (1920x1080). Você precisará ajustar as coordenadas no arquivo `perception/ocr_engine.py`.
