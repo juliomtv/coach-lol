@@ -3,8 +3,10 @@ import json
 import os
 import sys
 import psutil
+import cv2
 from capture.screen_capture import ScreenCapture
 from perception.ocr_engine import OCREngine
+from perception.map_engine import MapEngine
 from core.state import GameState, ChampionState
 from intelligence.tracker import JunglerTracker, JaxStrategy
 from output.voice_output import VoiceCoach
@@ -22,12 +24,11 @@ class JaxJungleCoach:
         self.capture = ScreenCapture()
         tess_path = self.config['ocr']['tesseract_path']
         
-        # Verificação básica do Tesseract
         if not os.path.exists(tess_path):
             print(f"\n[AVISO]: Tesseract não encontrado em: {tess_path}")
-            print("[DICA]: Verifique o caminho no arquivo config/config.json")
             
         self.ocr = OCREngine(tesseract_cmd=tess_path)
+        self.map_engine = MapEngine()
         self.tracker = JunglerTracker()
         self.voice = VoiceCoach(
             rate=self.config['audio']['rate'], 
@@ -35,12 +36,11 @@ class JaxJungleCoach:
         )
         self.running = False
         self.in_game = False
+        self.last_map_alert = 0
 
     def is_lol_running(self):
-        """Verifica se o processo do League of Legends (o jogo em si) está ativo."""
         for proc in psutil.process_iter(['name']):
             try:
-                # O processo do jogo geralmente é "League of Legends.exe"
                 if "League of Legends" in proc.info['name']:
                     return True
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -48,42 +48,31 @@ class JaxJungleCoach:
         return False
 
     def wait_for_game_start(self):
-        """Fica em loop até detectar que o processo do LoL está ativo e o tempo começou."""
-        print("\n[STAND-BY] Aguardando League of Legends ser detectado...")
-        
+        print("\n[STAND-BY] Aguardando League of Legends...")
         while self.running:
-            # Passo 1: Verificar se o processo existe
             if not self.is_lol_running():
                 time.sleep(5)
                 continue
             
-            print("[SISTEMA] Processo do League of Legends detectado! Aguardando início da partida...")
+            print("[SISTEMA] LoL detectado! Tentando ler o relógio...")
+            frame = self.capture.capture_frame()
+            current_time = self.ocr.extract_game_time(frame)
             
-            # Passo 2: Tentar ler o tempo de jogo
-            while self.is_lol_running():
-                frame = self.capture.capture_frame()
-                current_time = self.ocr.extract_game_time(frame)
-                
-                # Se o tempo for maior que 0, a partida começou
-                if current_time > 0:
-                    print(f"[SISTEMA] Partida detectada (Tempo: {int(current_time)}s)! Iniciando coach...")
-                    self.voice.speak("Partida detectada. Boa sorte no Rift!")
-                    self.in_game = True
-                    return True
-                
-                # Se debug estiver ativo, salva o frame para o usuário ver o que o OCR está tentando ler
-                if self.config['app'].get('debug', False):
-                    self.capture.save_debug_frame(frame, "debug_wait_start.png")
-                
-                print("[SISTEMA] LoL aberto, mas tempo de jogo não detectado. Verifique se o jogo está em primeiro plano.")
-                time.sleep(5)
+            if current_time > 0:
+                print(f"[SISTEMA] Partida detectada! Iniciando...")
+                self.voice.speak("Partida iniciada. Boa sorte!")
+                self.in_game = True
+                return True
             
-            print("[SISTEMA] Processo do LoL fechado. Voltando para espera...")
+            # Debug para ajudar o usuário a ver o que o script está vendo
+            debug_roi = self.ocr.preprocess_for_time(frame[int(frame.shape[0]*0.01):int(frame.shape[0]*0.06), int(frame.shape[1]*0.92):int(frame.shape[1]*0.99)])
+            cv2.imwrite("debug_clock_view.png", debug_roi)
             
+            print("[SISTEMA] Relógio não detectado. Verifique 'debug_clock_view.png'.")
+            time.sleep(5)
         return False
 
     def run_session(self):
-        """Executa a lógica durante uma partida ativa."""
         last_time_processed = -1
         consecutive_zero_time = 0
         
@@ -92,11 +81,9 @@ class JaxJungleCoach:
                 frame = self.capture.capture_frame()
                 current_time = self.ocr.extract_game_time(frame)
                 
-                # Lógica de detecção de fim de jogo (se o tempo parar de ser lido por muito tempo)
                 if current_time == 0:
                     consecutive_zero_time += 1
-                    if consecutive_zero_time > 15: # ~45 segundos sem ler tempo
-                        print("[SISTEMA] Partida encerrada ou tempo não legível.")
+                    if consecutive_zero_time > 20:
                         self.in_game = False
                         break
                 else:
@@ -106,17 +93,27 @@ class JaxJungleCoach:
                     self.state.update_time(current_time)
                     last_time_processed = current_time
                     
-                    print(f"[LIVE] Tempo: {int(current_time // 60)}:{int(current_time % 60):02d}")
-
-                    # Gatilhos de Inteligência
-                    if 10 <= current_time <= 15:
-                        self.voice.speak("Início de partida. Foque no seu pathing inicial.")
-
-                    if 185 <= current_time <= 195:
-                        self.voice.speak("O Aronguejo nasceu. Garanta o controle do rio.")
+                    # 1. Analisar Minimapa
+                    minimap_roi = self.ocr.get_minimap_roi(frame)
+                    map_state = self.map_engine.analyze_map_state(minimap_roi)
                     
-                    if self.state.player_level == 6:
-                         self.voice.speak("Nível 6 atingido. Aproveite seu power spike.")
+                    # 2. Lógica de Alertas de Mapa
+                    if time.time() - self.last_map_alert > 15: # Evita spam de voz
+                        if map_state["enemy_count"] > 0:
+                            if any(zone in map_state["hot_zones"] for zone in ["dragon", "baron_nashor"]):
+                                self.voice.speak("Inimigos detectados perto de objetivo importante!")
+                                self.last_map_alert = time.time()
+                            elif map_state["enemy_count"] >= 3:
+                                self.voice.speak(f"Cuidado, {map_state['enemy_count']} inimigos visíveis no mapa.")
+                                self.last_map_alert = time.time()
+
+                    # 3. Gatilhos de Tempo
+                    if 10 <= current_time <= 15:
+                        self.voice.speak("Inicie sua rota de selva.")
+                    elif 185 <= current_time <= 195:
+                        self.voice.speak("Aronguejo disponível.")
+
+                    print(f"[LIVE] Tempo: {int(current_time // 60)}:{int(current_time % 60):02d} | Inimigos: {map_state['enemy_count']}")
 
                 time.sleep(self.config['app']['capture_interval'])
                 
@@ -125,23 +122,19 @@ class JaxJungleCoach:
             self.in_game = False
 
     def start(self):
-        """Loop principal que gerencia múltiplas partidas."""
         self.running = True
-        print("--- Jax Jungle Coach v4 (Auto-Detect) ---")
-        
+        print("--- Jax Jungle Coach v5 (Map Aware) ---")
         try:
             while self.running:
                 if self.wait_for_game_start():
                     self.run_session()
-                    print("[SISTEMA] Partida finalizada. Voltando para o modo de espera...")
+                    print("[SISTEMA] Partida finalizada.")
                     time.sleep(10)
         except KeyboardInterrupt:
             self.stop()
 
     def stop(self):
         self.running = False
-        print("\nEncerrando o coach...")
-        self.voice.speak("Desligando assistente.")
         sys.exit(0)
 
 if __name__ == "__main__":

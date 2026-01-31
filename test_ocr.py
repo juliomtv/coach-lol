@@ -1,56 +1,51 @@
 import cv2
 import json
 import os
-import sys
+import time
 from capture.screen_capture import ScreenCapture
 from perception.ocr_engine import OCREngine
+from perception.map_engine import MapEngine
 
-def test_ocr():
-    print("--- Teste de Diagnóstico de OCR ---")
+def test_diagnostics():
+    print("--- Diagnóstico Completo: Relógio e Minimapa ---")
     config_path = os.path.join('config', 'config.json')
     
-    if not os.path.exists(config_path):
-        print("Erro: Arquivo config/config.json não encontrado.")
-        return
-
     with open(config_path, 'r') as f:
         config = json.load(f)
 
     tess_path = config['ocr']['tesseract_path']
-    print(f"Caminho do Tesseract: {tess_path}")
-    
-    if not os.path.exists(tess_path):
-        print("[ERRO] Tesseract não encontrado no caminho especificado!")
-        return
-
     capture = ScreenCapture()
     ocr = OCREngine(tesseract_cmd=tess_path)
+    map_eng = MapEngine()
 
-    print("\nCapturando tela em 3 segundos... Mude para a janela do LoL!")
-    import time
-    time.sleep(3)
+    print("\nCapturando em 5 segundos... Abra o LoL na partida!")
+    time.sleep(5)
 
     frame = capture.capture_frame()
-    
-    # Tenta extrair o tempo
     h, w = frame.shape[:2]
-    y1, y2 = int(h * 0.018), int(h * 0.045)
-    x1, x2 = int(w * 0.935), int(w * 0.985)
-    roi = frame[y1:y2, x1:x2]
-    
-    # Salva para o usuário ver
-    cv2.imwrite("debug_ocr_roi.png", roi)
-    cv2.imwrite("debug_full_frame.png", frame)
+    print(f"Resolução Detectada: {w}x{h}")
+
+    # Teste Relógio
+    y1, y2 = int(h * 0.01), int(h * 0.06)
+    x1, x2 = int(w * 0.92), int(w * 0.99)
+    clock_roi = frame[y1:y2, x1:x2]
+    processed_clock = ocr.preprocess_for_time(clock_roi)
+    cv2.imwrite("diag_clock_raw.png", clock_roi)
+    cv2.imwrite("diag_clock_processed.png", processed_clock)
     
     current_time = ocr.extract_game_time(frame)
+    print(f"Tempo detectado: {current_time}s")
+
+    # Teste Minimapa
+    minimap_roi = ocr.get_minimap_roi(frame)
+    cv2.imwrite("diag_minimap.png", minimap_roi)
+    map_state = map_eng.analyze_map_state(minimap_roi)
+    print(f"Inimigos no minimapa: {map_state['enemy_count']}")
     
-    print(f"\nResultado da leitura: {current_time}")
-    if current_time > 0:
-        print("SUCESSO: O tempo foi detectado corretamente!")
-    else:
-        print("FALHA: O tempo não foi detectado.")
-        print("DICA: Verifique o arquivo 'debug_ocr_roi.png' para ver se a região capturada contém o relógio do jogo.")
-        print(f"Sua resolução detectada: {w}x{h}")
+    print("\nArquivos de diagnóstico gerados:")
+    print("- diag_clock_raw.png (O que o script vê no relógio)")
+    print("- diag_clock_processed.png (Como o OCR tenta ler o relógio)")
+    print("- diag_minimap.png (O que o script vê no minimapa)")
 
 if __name__ == "__main__":
-    test_ocr()
+    test_diagnostics()
