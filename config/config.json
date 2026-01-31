@@ -1,0 +1,21 @@
+{
+    "app": {
+        "mode": "live",
+        "capture_interval": 3.0,
+        "debug": true
+    },
+    "ocr": {
+        "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+        "language": "eng"
+    },
+    "audio": {
+        "enabled": true,
+        "volume": 1.0,
+        "rate": 150
+    },
+    "gameplay": {
+        "champion": "Jax",
+        "role": "Jungle",
+        "priority_alerts": ["invade", "objective", "counter_gank"]
+    }
+}
