@@ -2,71 +2,57 @@ import time
 
 class JunglerTracker:
     def __init__(self):
-        # Tempos de nascimento (em segundos de jogo)
-        self.spawn_times = {
-            "blue_buff": 100,  # 1:40
-            "red_buff": 100,   # 1:40
-            "scuttle": 210,    # 3:30
-            "dragon_first": 300, # 5:00
-            "herald": 480,     # 8:00
-            "baron": 1200      # 20:00
-        }
-        
-        # Intervalos de respawn (em segundos)
-        self.respawn_intervals = {
-            "small_camps": 135, # 2:15
-            "buffs": 300,       # 5:00
-            "dragon": 300,      # 5:00
-            "baron": 360        # 6:00
-        }
-        
         self.alerts_fired = set()
+        self.enemy_jungler = "Desconhecido"
+        self.matchup_advice_given = False
+
+    def get_matchup_advice(self, enemy_name):
+        self.enemy_jungler = enemy_name
+        advices = {
+            "Lee Sin": "Lee Sin é forte no early game. Evite trocas 1v1 no nível 3. Proteja suas entradas da selva.",
+            "Master Yi": "Yi escala muito bem. Tente invadir e punir o farm dele cedo. Guarde seu E (Jax) para o momento que ele usar o Q.",
+            "Graves": "Graves limpa a selva rápido e é saudável. Cuidado com o counter-gank. Tente lutar quando ele não tiver stacks de E.",
+            "Nidalee": "Nidalee vai tentar te invadir. Mantenha a vida alta e desvie das lanças. Se ela errar o Q, você ganha a troca.",
+            "Shaco": "Compre sentinelas de controle. Shaco vai tentar roubar seu segundo buff. Não use seu E antes dele aparecer.",
+            "Kayn": "Kayn é fraco antes da forma. Tente lutar com ele nos caranguejos. Não deixe ele farmar orbes de graça.",
+            "Warwick": "Não lute com Warwick se você estiver com pouca vida. Ele tem muito sustain. Peça ajuda para matá-lo.",
+            "Kha'Zix": "Evite ficar isolado. Lute perto de tropas ou monstros da selva para anular o dano passivo dele."
+        }
+        return advices.get(enemy_name, f"Você está contra {enemy_name}. Foque em farmar e procure janelas de gank seguras.")
 
     def get_time_alerts(self, game_time):
-        """Retorna alertas baseados puramente no tempo de jogo."""
         alerts = []
         
-        # 1. Alertas de Nascimento Inicial
-        if 200 <= game_time <= 205 and "scuttle_spawn" not in self.alerts_fired:
-            alerts.append("O Aronguejo vai nascer em 10 segundos. Garanta a visão do rio.")
-            self.alerts_fired.add("scuttle_spawn")
-            
-        if 270 <= game_time <= 275 and "dragon_spawn_soon" not in self.alerts_fired:
-            alerts.append("O primeiro Dragão nasce em 30 segundos. Prepare a rota inferior.")
-            self.alerts_fired.add("dragon_spawn_soon")
-            
-        if 450 <= game_time <= 455 and "herald_spawn_soon" not in self.alerts_fired:
-            alerts.append("O Arauto vai nascer em breve. Olho no topo.")
-            self.alerts_fired.add("herald_spawn_soon")
+        # Alertas de Nascimento (30 segundos de antecedência)
+        milestones = [
+            (100, "Os campos da selva nasceram. Comece sua rota."),
+            (180, "O Aronguejo nasce em 30 segundos. Prepare-se para disputar o rio."),
+            (210, "Aronguejo nasceu! Garanta a visão."),
+            (270, "O Dragão nasce em 30 segundos. Garanta prioridade no bot."),
+            (300, "O Dragão está vivo!"),
+            (450, "O Arauto nasce em 30 segundos. Olho no topo."),
+            (480, "O Arauto está vivo!"),
+            (1170, "O Barão Nashor nasce em 30 segundos. Prepare a visão.")
+        ]
 
-        # 2. Alertas de Buffs (Ciclo inicial aproximado se não houver visão)
-        # Buffs nascem 1:40 -> Morrem ~2:00 -> Nascem ~7:00
-        if 400 <= game_time <= 405 and "buffs_second_spawn" not in self.alerts_fired:
-            alerts.append("Seus buffs devem estar renascendo. Verifique sua selva.")
-            self.alerts_fired.add("buffs_second_spawn")
+        for t, msg in milestones:
+            if t <= game_time <= t + 5 and msg not in self.alerts_fired:
+                alerts.append(msg)
+                self.alerts_fired.add(msg)
 
-        # 3. Alertas Recorrentes (Lembretes de farm)
-        if game_time > 0 and game_time % 180 == 0: # A cada 3 minutos
-            alerts.append("Não esqueça de limpar seus campos da selva para manter o XP.")
+        # Lembretes de Buffs (Respawn a cada 5 min)
+        # Assumindo morte por volta de 2:10 e 7:10
+        if 400 <= game_time <= 405 and "buffs_2" not in self.alerts_fired:
+            alerts.append("Seus buffs vão renascer em breve. Planeje sua rota de volta.")
+            self.alerts_fired.add("buffs_2")
 
         return alerts
 
 class JaxStrategy:
     @staticmethod
-    def get_pathing_advice(game_time, side="blue"):
-        """Sugere rotas baseadas no tempo de jogo."""
-        if 0 < game_time < 90:
-            return "Comece no seu Buff mais forte e planeje sua rota para o lado oposto."
-        if 180 < game_time < 240:
-            return "Procure gankar uma rota ou garantir o Aronguejo agora."
-        return None
-
-    @staticmethod
-    def evaluate_objective_priority(game_time, enemy_count_bot, enemy_count_top):
-        """Sugere qual objetivo focar."""
-        if 300 <= game_time < 1200:
-            if enemy_count_bot >= 3:
-                return "Muitos inimigos no bot. Considere fazer o Arauto ou invadir a selva superior."
-            if enemy_count_top >= 2:
-                return "Inimigos no topo. O Dragão está livre, aproveite!"
-        return None
+    def get_combat_tip(enemy_jungler):
+        if "Master Yi" in enemy_jungler:
+            return "Dica: Use seu Contra-Ataque apenas quando ele começar a te bater com o E ativo."
+        if "Lee Sin" in enemy_jungler:
+            return "Dica: Salte em uma sentinela ou tropa se ele acertar a primeira parte do Q."
+        return "Mantenha o farm alto para garantir sua Força da Trindade."
